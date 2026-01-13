@@ -1,0 +1,5 @@
+{
+  "name": "Lumina Deck",
+  "description": "Transforms static PDFs into cinematic, animated web presentations using Gemini multimodal AI. Features slide analysis, script generation, and high-fidelity visual reimaging.",
+  "requestFramePermissions": []
+}
