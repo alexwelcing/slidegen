@@ -2,21 +2,21 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Upload, FileType, Key, ExternalLink } from 'lucide-react';
 import { convertPdfToImages } from './services/pdfService';
-import { analyzeSlideContent, generateSlideVisual, generateAssetImage, generateVideoFromImage, generateSlideVisualPro, deepAnalyzeSlide } from './services/geminiService';
+import { analyzeSlideContent, generateSlideVisual, generateVideoFromImage, deepAnalyzeSlide, performAreaEdit } from './services/geminiService';
 import { loadProject, saveProject, updatePersistentSlide } from './services/storageService';
-import { SlideData, AppMode, ProcessingStats, GeneratedAsset } from './types';
+import { uploadMedia, logTask, persistDeck, isSupabaseConfigured } from './services/supabaseService';
+import { SlideData, AppMode, ProcessingStats, GeneratedAsset, SelectionRect } from './types';
 import { Button } from './components/Button';
 import { ProcessingView } from './components/ProcessingView';
 import { PresentationEditor } from './components/PresentationEditor';
 import { Player } from './components/Player';
+import { SetupFlow } from './components/SetupFlow';
 
 export default function App() {
-  const [mode, setMode] = useState<AppMode>(AppMode.UPLOAD);
+  const [mode, setMode] = useState<AppMode>(AppMode.SETUP);
   const [slides, setSlides] = useState<SlideData[]>([]);
   const slidesRef = useRef<SlideData[]>([]); 
-  const [stats, setStats] = useState<ProcessingStats>({ totalSlides: 0, processedSlides: 0, currentOperation: '', startTime: 0 });
   const [hasApiKey, setHasApiKey] = useState(false);
-  const [keyCheckLoading, setKeyCheckLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
 
@@ -24,65 +24,51 @@ export default function App() {
 
   useEffect(() => {
     const init = async () => {
+      // Check for Gemini API Key (standard aistudio check)
       if (window.aistudio?.hasSelectedApiKey) {
         setHasApiKey(await window.aistudio.hasSelectedApiKey());
       } else { setHasApiKey(true); }
-      setKeyCheckLoading(false);
+
+      // Check if project exists
       const saved = await loadProject();
-      if (saved?.length) { 
+      if (saved?.length && isSupabaseConfigured()) { 
         setSlides(saved); 
         setMode(AppMode.EDITOR); 
         setLastSavedAt(new Date());
+      } else if (!isSupabaseConfigured()) {
+        setMode(AppMode.SETUP);
+      } else {
+        setMode(AppMode.UPLOAD);
       }
     };
     init();
   }, []);
 
-  // Durable Checkpoint Saver
-  const durableCheckpoint = async (id: string, updates: Partial<SlideData>) => {
-    const currentSlides = slidesRef.current;
-    const idx = currentSlides.findIndex(s => s.id === id);
-    if (idx === -1) return;
-    
-    const updatedSlide = { ...currentSlides[idx], ...updates };
-    await updatePersistentSlide(updatedSlide);
-  };
-
   useEffect(() => {
-    if (slides.length === 0) return;
+    if (slides.length === 0 || mode === AppMode.SETUP) return;
     setIsSaving(true);
     const timeout = setTimeout(async () => {
       try {
         await saveProject(slides);
+        await persistDeck(slides);
         setIsSaving(false);
         setLastSavedAt(new Date());
       } catch (err) {
-        console.error("Auto-save failed", err);
         setIsSaving(false);
       }
-    }, 2000); 
+    }, 3000); 
     return () => clearTimeout(timeout);
-  }, [slides]);
-
-  const handleSelectKey = async () => { 
-    if (window.aistudio) { 
-      await window.aistudio.openSelectKey(); 
-      setHasApiKey(true); 
-    } 
-  };
-  
-  const handleReset = () => { setSlides([]); setMode(AppMode.UPLOAD); };
+  }, [slides, mode]);
 
   const processingSlideIds = useRef<Set<string>>(new Set());
   const activeRequests = useRef(0);
-  const MAX_CONCURRENT = 5;
+  const MAX_CONCURRENT = 3;
 
   useEffect(() => {
     if (mode !== AppMode.EDITOR) return;
     const processQueue = async () => {
         if (activeRequests.current >= MAX_CONCURRENT) return;
         const currentSlides = slidesRef.current;
-        
         const nextTaskSlide = currentSlides.find(s => 
           (s.status === 'pending' || s.status === 'analyzed') && !processingSlideIds.current.has(s.id)
         );
@@ -105,7 +91,7 @@ export default function App() {
             }
         }
     };
-    const interval = setInterval(processQueue, 300);
+    const interval = setInterval(processQueue, 500);
     return () => clearInterval(interval);
   }, [mode]);
 
@@ -123,10 +109,8 @@ export default function App() {
       if (!slide) return;
       await updateSlideState(index, { status: 'analyzing' });
       try {
-          const analysis = await analyzeSlideContent(slide.originalImage);
-          const updates: Partial<SlideData> = { status: 'analyzed', analysis };
-          await durableCheckpoint(slide.id, updates);
-          await updateSlideState(index, updates);
+          const { analysis, citations } = await analyzeSlideContent(slide.originalImage);
+          await handleUpdateSlide(slide.id, { status: 'analyzed', analysis, groundingSources: citations });
       } catch (e: any) {
           await updateSlideState(index, { status: 'error', error: e.message });
       }
@@ -138,23 +122,16 @@ export default function App() {
       await updateSlideState(index, { status: 'generating_image' });
 
       try {
-          const bgPromise = generateSlideVisual(slide.analysis.visualPrompt);
-          const assetsPromise = (async () => {
-             const prompts = (slide.analysis?.assetPrompts || []).slice(0, 2);
-             if (prompts.length === 0) return [];
-             const results = await Promise.all(prompts.map(async p => {
-                 try { 
-                   const url = await generateAssetImage(p); 
-                   return url ? ({ id: crypto.randomUUID(), prompt: p, imageUrl: url } as GeneratedAsset) : null; 
-                 } catch { return null; }
-             }));
-             return results.filter((r): r is GeneratedAsset => r !== null);
-          })();
+          const bgUrl = await generateSlideVisual(slide.analysis.visualPrompt);
+          let finalBg = bgUrl;
+          if (bgUrl) {
+            const publicUrl = await uploadMedia('media', `slides/${slide.id}_bg.png`, bgUrl);
+            if (publicUrl) finalBg = publicUrl;
+          }
 
-          const [enhancedImage, generatedAssets] = await Promise.all([bgPromise, assetsPromise]);
-          const updates: Partial<SlideData> = { status: 'complete', enhancedImage, generatedAssets };
-          await durableCheckpoint(slide.id, updates);
-          await updateSlideState(index, updates);
+          const updates: Partial<SlideData> = { status: 'complete', enhancedImage: finalBg };
+          await handleUpdateSlide(slide.id, updates);
+          await logTask(slide.id, 'complete', updates);
       } catch (e: any) {
           await updateSlideState(index, { status: 'error', error: e.message });
       }
@@ -166,62 +143,35 @@ export default function App() {
           if (index === -1) return prev;
           const newSlides = [...prev];
           newSlides[index] = { ...newSlides[index], ...updates };
-          if (updates.analysis && newSlides[index].analysis) {
-             newSlides[index].analysis = { ...newSlides[index].analysis, ...updates.analysis };
-          }
           return newSlides;
       });
-      await durableCheckpoint(id, updates);
+      const current = slidesRef.current.find(s => s.id === id);
+      if (current) await updatePersistentSlide({ ...current, ...updates });
   };
 
-  const handleGenerateVideo = async (id: string, prompt: string, isTransition: boolean = false) => {
+  const handleGenerateVideo = async (id: string, prompt: string, type: 'background' | 'intro') => {
       const index = slidesRef.current.findIndex(s => s.id === id);
       if (index === -1) return;
       await updateSlideState(index, { status: 'generating_video' });
       try {
           const slide = slidesRef.current[index];
-          // Use original image as base if no enhanced one exists
           const baseImg = slide.enhancedImage || slide.originalImage;
           const videoUrl = await generateVideoFromImage(baseImg, prompt);
           
-          if (isTransition) {
-             await handleUpdateSlide(id, { status: 'complete', transitionVideoUrl: videoUrl, transitionType: 'cinematic' });
+          let finalVideo = videoUrl;
+          if (videoUrl) {
+            const publicUrl = await uploadMedia('media', `videos/${slide.id}_${type}.mp4`, videoUrl);
+            if (publicUrl) finalVideo = publicUrl;
+          }
+
+          if (type === 'intro') {
+             await handleUpdateSlide(id, { status: 'complete', transitionVideoUrl: finalVideo, transitionType: 'cinematic', videoPosition: 'intro' });
           } else {
-             await handleUpdateSlide(id, { status: 'complete', videoUrl });
+             await handleUpdateSlide(id, { status: 'complete', videoUrl: finalVideo, videoPosition: 'background' });
           }
       } catch (e: any) { 
-          handleUpdateSlide(id, { status: 'complete', error: "Veo generation failed: " + e.message }); 
+          handleUpdateSlide(id, { status: 'complete', error: "Veo fail: " + e.message }); 
       }
-  };
-
-  const handleGenerateTransitionFromPhoto = async (id: string, file: File, prompt: string) => {
-      const index = slidesRef.current.findIndex(s => s.id === id);
-      if (index === -1) return;
-      await updateSlideState(index, { status: 'generating_video' });
-      try {
-          const reader = new FileReader();
-          const base64: string = await new Promise((resolve) => {
-              reader.onload = () => resolve(reader.result as string);
-              reader.readAsDataURL(file);
-          });
-          const videoUrl = await generateVideoFromImage(base64, prompt);
-          await handleUpdateSlide(id, { status: 'complete', transitionVideoUrl: videoUrl, transitionType: 'cinematic' });
-      } catch (e: any) {
-          handleUpdateSlide(id, { status: 'complete', error: "Transition fail: " + e.message });
-      }
-  };
-
-  const handleUpgradeHD = async (id: string) => {
-      const index = slidesRef.current.findIndex(s => s.id === id);
-      if (index === -1) return;
-      await updateSlideState(index, { status: 'generating_image' });
-      try {
-          const slide = slidesRef.current[index];
-          if (slide.analysis) {
-            const hdImage = await generateSlideVisualPro(slide.analysis.visualPrompt, "2K");
-            handleUpdateSlide(id, { status: 'complete', enhancedImage: hdImage });
-          }
-      } catch { handleUpdateSlide(id, { status: 'complete' }); }
   };
 
   const handleDeepAnalyze = async (id: string) => {
@@ -237,28 +187,6 @@ export default function App() {
       }
   };
 
-  const handleGenerateAssets = async (id: string) => {
-    const index = slidesRef.current.findIndex(s => s.id === id);
-    if (index === -1) return;
-    const slide = slidesRef.current[index];
-    if (!slide.analysis) return;
-    
-    await updateSlideState(index, { status: 'generating_assets' });
-    try {
-      const prompts = (slide.analysis?.assetPrompts || []).slice(0, 2);
-      const results = await Promise.all(prompts.map(async p => {
-          try { 
-            const url = await generateAssetImage(p); 
-            return url ? ({ id: crypto.randomUUID(), prompt: p, imageUrl: url } as GeneratedAsset) : null; 
-          } catch { return null; }
-      }));
-      const generatedAssets = results.filter((r): r is GeneratedAsset => r !== null);
-      handleUpdateSlide(id, { status: 'complete', generatedAssets });
-    } catch {
-      handleUpdateSlide(id, { status: 'complete' });
-    }
-  };
-
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file?.type === 'application/pdf') {
@@ -272,18 +200,35 @@ export default function App() {
     }
   };
 
+  const stats: ProcessingStats = {
+    totalSlides: slides.length,
+    processedSlides: slides.filter(s => s.status === 'complete' || s.status === 'error').length,
+    currentOperation: slides.find(s => !['pending', 'complete', 'error'].includes(s.status))?.status || 'Processing PDF...',
+    startTime: Date.now()
+  };
+
+  if (mode === AppMode.SETUP) return <SetupFlow onComplete={() => setMode(AppMode.UPLOAD)} />;
   if (mode === AppMode.PROCESSING) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><ProcessingView stats={stats} /></div>;
   if (mode === AppMode.EDITOR) return (
     <PresentationEditor 
         slides={slides} 
         onPlay={() => setMode(AppMode.PRESENT)} 
-        onReset={handleReset} 
+        onReset={() => { setSlides([]); setMode(AppMode.UPLOAD); }} 
         onUpdateSlide={handleUpdateSlide} 
         onGenerateVideo={handleGenerateVideo} 
-        onGenerateTransitionFromPhoto={handleGenerateTransitionFromPhoto}
-        onUpgradeHD={handleUpgradeHD} 
+        onGenerateTransitionFromPhoto={() => {}} // Placeholder
+        onUpgradeHD={() => {}} // Placeholder
         onDeepAnalyze={handleDeepAnalyze}
-        onGenerateAssets={handleGenerateAssets}
+        onEditArea={async (id, rect, prompt) => {
+          const index = slidesRef.current.findIndex(s => s.id === id);
+          if (index === -1) return;
+          const slide = slidesRef.current[index];
+          await updateSlideState(index, { status: 'editing_area' });
+          const updates = await performAreaEdit(slide.originalImage, rect, prompt);
+          if (slide.analysis) {
+            handleUpdateSlide(id, { analysis: { ...slide.analysis, ...updates }, status: 'complete' });
+          }
+        }}
         isSaving={isSaving}
         lastSavedAt={lastSavedAt}
     />
@@ -293,22 +238,13 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4">
       <div className="max-w-xl w-full text-center">
-        <h1 className="text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-400 mb-6 tracking-tight">Lumina Deck</h1>
-        <p className="text-slate-400 text-lg mb-12 font-light">Transform PDFs into cinematic strategy presentations with Gemini Multimodal AI.</p>
-        {!keyCheckLoading && !hasApiKey ? (
-            <div className="border border-amber-500/30 bg-slate-900/50 rounded-2xl p-12 backdrop-blur-sm">
-                <Button onClick={handleSelectKey} className="w-full bg-amber-600">Connect Google Cloud</Button>
-            </div>
-        ) : (
-            <div className="border-2 border-dashed border-slate-700 bg-slate-900/50 rounded-2xl p-12 transition-all hover:border-blue-500/50 group">
-                <FileType className="w-12 h-12 text-slate-500 group-hover:text-blue-400 mx-auto mb-6 transition-colors" />
-                <h3 className="text-xl font-semibold mb-8">Upload Strategy PDF</h3>
-                <div className="relative">
-                    <input type="file" accept="application/pdf" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                    <Button className="w-full">Select File</Button>
-                </div>
-            </div>
-        )}
+        <h1 className="text-5xl font-bold text-white mb-6 tracking-tighter">Lumina Agent</h1>
+        <p className="text-slate-400 text-lg mb-12 font-light">Self-perfecting strategy deck builder. Enhanced with Gemini 3 Pro reasoning.</p>
+        <div className="border-2 border-dashed border-slate-700 bg-slate-900/30 rounded-3xl p-16 transition-all hover:border-blue-500/50">
+            <FileType className="w-16 h-16 text-slate-600 mx-auto mb-8" />
+            <input type="file" accept="application/pdf" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+            <Button className="w-full bg-white text-slate-950 font-bold uppercase tracking-widest h-16 rounded-2xl">Upload PDF Strategy</Button>
+        </div>
       </div>
     </div>
   );

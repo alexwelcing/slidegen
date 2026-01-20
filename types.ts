@@ -1,41 +1,49 @@
 
+export interface SelectionRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface GroundingSource {
+  title?: string;
+  uri?: string;
+}
+
 export interface SlideData {
   id: string;
   originalImage: string; // Base64
-  enhancedImage?: string; // Base64 from Gemini
+  enhancedImage?: string; // Base64
   generatedAssets?: GeneratedAsset[];
-  videoUrl?: string; // Content background video (Blob URL)
-  transitionVideoUrl?: string; // Cinematic transition video (Blob URL)
+  videoUrl?: string; // Content background video
+  transitionVideoUrl?: string; // Cinematic transition video
+  videoPosition?: 'background' | 'intro'; // Automated sequence choice
   pageIndex: number;
-  status: 'pending' | 'analyzing' | 'analyzed' | 'generating_image' | 'generating_assets' | 'generating_video' | 'complete' | 'error';
+  status: 'pending' | 'analyzing' | 'analyzed' | 'generating_image' | 'generating_assets' | 'generating_video' | 'complete' | 'error' | 'editing_area';
   analysis?: SlideAnalysis;
   error?: string;
   transitionType?: 'fade' | 'slide' | 'zoom' | 'cinematic';
+  groundingSources?: GroundingSource[];
 }
 
 export interface GeneratedAsset {
   id: string;
   prompt: string;
-  imageUrl: string; // Base64
+  imageUrl: string; // Base64 or Supabase URL
+  position?: SelectionRect;
 }
 
 export interface SlideAnalysis {
-  // Consulting Principle: Headline Discipline
-  actionTitle: string; // Full sentence assertion
-  subtitle: string; // Context/Source
-  
-  // Consulting Principle: Pyramid Principle / MECE
-  keyTakeaways: string[]; // 3-4 Mutually Exclusive, Collectively Exhaustive points
-  
+  actionTitle: string;
+  subtitle: string;
+  keyTakeaways: string[];
   script: string; 
-  
-  // Visual Strategy
   visualPrompt: string; 
   assetPrompts: string[]; 
   keywords: string[];
-  
-  // Layout Frameworks
   consultingLayout: 'data-evidence' | 'strategic-pillars' | 'executive-summary' | 'process-flow';
+  suggestedMotion?: string; // AI suggested motion for video
 }
 
 export interface ProcessingStats {
@@ -45,7 +53,11 @@ export interface ProcessingStats {
   startTime: number;
 }
 
-// PDF.js and PptxGenJS types augmentations
+export interface SupabaseConfig {
+  url: string;
+  key: string;
+}
+
 declare global {
   interface AIStudio {
     hasSelectedApiKey: () => Promise<boolean>;
@@ -60,6 +72,7 @@ declare global {
 }
 
 export enum AppMode {
+  SETUP = 'SETUP',
   UPLOAD = 'UPLOAD',
   PROCESSING = 'PROCESSING',
   EDITOR = 'EDITOR',

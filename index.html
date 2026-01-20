@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -13,10 +14,11 @@
           extend: {
             colors: {
               lumina: {
-                900: '#0f172a',
-                800: '#1e293b',
+                900: '#020617',
+                800: '#0f172a',
+                700: '#1e293b',
+                600: '#334155',
                 500: '#3b82f6',
-                400: '#60a5fa',
                 accent: '#f43f5e',
               }
             },
@@ -26,17 +28,21 @@
             animation: {
               'pulse-fast': 'pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
               'float': 'float 6s ease-in-out infinite',
+              'shimmer': 'shimmer 2s infinite linear',
             },
             keyframes: {
               float: {
                 '0%, 100%': { transform: 'translateY(0)' },
                 '50%': { transform: 'translateY(-20px)' },
+              },
+              shimmer: {
+                '0%': { backgroundPosition: '-200% 0' },
+                '100%': { backgroundPosition: '200% 0' },
               }
             }
           },
         },
       };
-      // Configure PDF.js worker
       window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -46,21 +52,9 @@
         color: #f8fafc;
         font-family: 'Inter', sans-serif;
       }
-      /* Custom scrollbar */
-      ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
-      }
-      ::-webkit-scrollbar-track {
-        background: #0f172a; 
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #334155; 
-        border-radius: 4px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #475569; 
-      }
+      ::-webkit-scrollbar { width: 4px; height: 4px; }
+      ::-webkit-scrollbar-track { background: #020617; }
+      ::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
     </style>
   <script type="importmap">
 {
@@ -70,7 +64,8 @@
     "react/": "https://esm.sh/react@^19.2.3/",
     "react": "https://esm.sh/react@^19.2.3",
     "@google/genai": "https://esm.sh/@google/genai@^1.35.0",
-    "framer-motion": "https://esm.sh/framer-motion@^12.25.0"
+    "framer-motion": "https://esm.sh/framer-motion@^12.25.0",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@^2.39.3"
   }
 }
 </script>
