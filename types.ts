@@ -42,8 +42,10 @@ export interface SlideAnalysis {
   visualPrompt: string; 
   assetPrompts: string[]; 
   keywords: string[];
-  consultingLayout: 'data-evidence' | 'strategic-pillars' | 'executive-summary' | 'process-flow';
+  consultingLayout: 'editorial-left' | 'editorial-right' | 'minimal-centered' | 'mckinsey-insight';
   suggestedMotion?: string; // AI suggested motion for video
+  colorPalette?: string[]; // Hex codes suggested by AI
+  mood?: string;
 }
 
 export interface ProcessingStats {

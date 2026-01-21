@@ -1,7 +1,7 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Database, ShieldCheck, Zap, Loader2, CheckCircle2, AlertTriangle, Cpu, Rocket, Copy, Terminal, Check, Key, Info } from 'lucide-react';
+import { Database, ShieldCheck, Zap, Loader2, CheckCircle2, AlertTriangle, Cpu, Rocket, Copy, Terminal, Check, Key, Info, Activity, Server, Lock } from 'lucide-react';
 import { Button } from './Button';
 import { runSystemDiagnostics } from '../services/geminiService';
 import { configureSupabase } from '../services/supabaseService';
@@ -19,6 +19,7 @@ export const SetupFlow: React.FC<SetupFlowProps> = ({ onComplete }) => {
   const [testError, setTestError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [hasGeminiKey, setHasGeminiKey] = useState(false);
+  const logContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const checkKey = async () => {
@@ -26,11 +27,17 @@ export const SetupFlow: React.FC<SetupFlowProps> = ({ onComplete }) => {
         const selected = await window.aistudio.hasSelectedApiKey();
         setHasGeminiKey(selected);
       } else {
-        setHasGeminiKey(true); // Development environment
+        setHasGeminiKey(true);
       }
     };
     checkKey();
   }, []);
+
+  useEffect(() => {
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    }
+  }, [diagnosticLogs]);
 
   const handleSelectKey = async () => {
     if (window.aistudio?.openSelectKey) {
@@ -39,22 +46,50 @@ export const SetupFlow: React.FC<SetupFlowProps> = ({ onComplete }) => {
     }
   };
 
-  const sqlSetup = `-- 1. Create Tables in Supabase SQL Editor
-CREATE TABLE IF NOT EXISTS lumina_tasks (
-  id TEXT PRIMARY KEY,
-  status TEXT,
-  last_payload JSONB,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  const sqlSetup = `-- FIX PERMISSIONS (RUN IN SUPABASE SQL EDITOR)
+
+-- 1. Create Tables
+create table if not exists lumina_tasks (
+  id text primary key,
+  status text,
+  last_payload jsonb,
+  updated_at timestamp with time zone default now()
 );
 
-CREATE TABLE IF NOT EXISTS lumina_decks (
-  id TEXT PRIMARY KEY,
-  slides JSONB,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+create table if not exists lumina_decks (
+  id text primary key,
+  slides jsonb,
+  updated_at timestamp with time zone default now()
 );
 
--- 2. Create Storage Bucket
--- Go to Storage -> New Bucket -> Name it "media" and make it PUBLIC.`;
+-- 2. ENABLE RLS (Required by Supabase)
+alter table lumina_tasks enable row level security;
+alter table lumina_decks enable row level security;
+
+-- 3. PERMISSIVE POLICIES (Allows Insert/Update for Demo)
+-- Note: 'WITH CHECK (true)' is crucial for UPSERT/INSERT to work
+drop policy if exists "Public Access Tasks" on lumina_tasks;
+create policy "Public Access Tasks" on lumina_tasks 
+for all using (true) with check (true);
+
+drop policy if exists "Public Access Decks" on lumina_decks;
+create policy "Public Access Decks" on lumina_decks 
+for all using (true) with check (true);
+
+-- 4. STORAGE BUCKET
+insert into storage.buckets (id, name, public) 
+values ('media', 'media', true)
+on conflict (id) do nothing;
+
+-- 5. STORAGE POLICIES
+drop policy if exists "Public Images Insert" on storage.objects;
+create policy "Public Images Insert" on storage.objects 
+for insert with check ( bucket_id = 'media' );
+
+drop policy if exists "Public Images Select" on storage.objects;
+create policy "Public Images Select" on storage.objects 
+for select using ( bucket_id = 'media' );
+`;
 
   const copySql = () => {
     navigator.clipboard.writeText(sqlSetup);
@@ -79,11 +114,11 @@ CREATE TABLE IF NOT EXISTS lumina_decks (
       await runSystemDiagnostics((msg, success) => {
         setDiagnosticLogs(prev => [...prev, { msg, success }]);
       });
-      setTimeout(() => setStep(3), 1000);
+      setTimeout(() => setStep(3), 800);
     } catch (e: any) {
       let msg = e.message || "Diagnostic test failed.";
       if (msg.includes("entity was not found")) {
-        msg = "API Key error. Please re-select your Gemini API Key in the previous step.";
+        msg = "API Key error. Please re-select your Gemini API Key in Step 1.";
       }
       setTestError(msg);
       setIsTesting(false);
@@ -91,174 +126,166 @@ CREATE TABLE IF NOT EXISTS lumina_decks (
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 overflow-hidden">
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-500/10 rounded-full blur-[120px]" />
-          <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-purple-500/10 rounded-full blur-[120px]" />
-      </div>
+    <div className="min-h-screen bg-[#050505] flex items-center justify-center p-6 overflow-hidden font-sans selection:bg-blue-500/30">
+      {/* Background Grid */}
+      <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: 'linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
+      <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent pointer-events-none" />
 
       <AnimatePresence mode="wait">
         {step === 1 && (
           <motion.div 
             key="step1"
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, x: -100 }}
-            className="w-full max-w-2xl bg-slate-900/40 backdrop-blur-3xl border border-white/10 rounded-[2.5rem] p-10 shadow-2xl relative z-10"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, x: -50, filter: 'blur(10px)' }}
+            className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-2 gap-8 z-10"
           >
-            <div className="flex items-center gap-4 mb-8">
-              <div className="p-4 bg-blue-500/20 rounded-2xl text-blue-400"><Database className="w-8 h-8" /></div>
+            {/* Left Panel: Inputs */}
+            <div className="bg-[#0f0f0f] border border-white/10 rounded-3xl p-8 shadow-2xl flex flex-col justify-between h-[600px]">
               <div>
-                <h2 className="text-3xl font-black text-white tracking-tight">Step 1</h2>
-                <p className="text-slate-400 font-bold uppercase tracking-[0.2em] text-[10px]">Infrastructure Sync</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-white font-bold text-sm mb-2 flex items-center gap-2">
-                    <Key className="w-4 h-4 text-emerald-400" /> 1. Gemini Protocol
-                  </h3>
-                  <p className="text-[11px] text-slate-400 mb-4">Required for Gemini 3 Pro reasoning and Veo video synthesis.</p>
-                  <Button 
-                    onClick={handleSelectKey} 
-                    className={`w-full h-12 rounded-xl text-[10px] uppercase font-black tracking-widest transition-all ${hasGeminiKey ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-white text-slate-950'}`}
-                  >
-                    {hasGeminiKey ? <><Check className="w-4 h-4 mr-2" /> Key Active</> : "Select Gemini API Key"}
-                  </Button>
-                  <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="flex items-center gap-1.5 mt-2 text-[9px] text-slate-500 hover:text-blue-400 transition-colors">
-                    <Info className="w-3 h-3" /> Note: Must be a paid billing project for Veo.
-                  </a>
+                <div className="flex items-center gap-3 mb-8">
+                   <div className="w-10 h-10 bg-white text-black rounded-full flex items-center justify-center font-bold font-mono">1</div>
+                   <h2 className="text-2xl font-serif text-white">System Calibration</h2>
                 </div>
 
-                <div className="pt-4 border-t border-white/5">
-                  <h3 className="text-white font-bold text-sm mb-4">2. Supabase Link</h3>
+                <div className="space-y-8">
                   <div className="space-y-3">
-                    <input 
-                      type="text" 
-                      value={dbUrl}
-                      onChange={(e) => setDbUrl(e.target.value)}
-                      className="w-full h-11 bg-slate-800/50 border border-white/5 rounded-xl px-4 text-white placeholder-slate-600 focus:ring-2 focus:ring-blue-500 outline-none font-mono text-xs"
-                      placeholder="Project URL"
-                    />
-                    <input 
-                      type="password" 
-                      value={dbKey}
-                      onChange={(e) => setDbKey(e.target.value)}
-                      className="w-full h-11 bg-slate-800/50 border border-white/5 rounded-xl px-4 text-white placeholder-slate-600 focus:ring-2 focus:ring-blue-500 outline-none font-mono text-xs"
-                      placeholder="Anon Key"
-                    />
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2"><Key className="w-3 h-3" /> Gemini Reasoning Engine</label>
+                    <Button 
+                      onClick={handleSelectKey} 
+                      className={`w-full h-12 rounded-lg text-xs font-mono transition-all border ${hasGeminiKey ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-white/5 text-slate-400 border-white/10 hover:border-white/30'}`}
+                    >
+                      {hasGeminiKey ? "API KEY CONNECTED" : "CONNECT GOOGLE AI STUDIO"}
+                    </Button>
+                  </div>
+
+                  <div className="space-y-4">
+                     <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2"><Database className="w-3 h-3" /> Supabase Vector Store</label>
+                     <input 
+                        type="text" value={dbUrl} onChange={(e) => setDbUrl(e.target.value)}
+                        className="w-full h-12 bg-black border border-white/10 rounded-lg px-4 text-xs font-mono text-white focus:border-blue-500 outline-none transition-colors placeholder-white/20"
+                        placeholder="HTTPS://YOUR-PROJECT.SUPABASE.CO"
+                      />
+                      <input 
+                        type="password" value={dbKey} onChange={(e) => setDbKey(e.target.value)}
+                        className="w-full h-12 bg-black border border-white/10 rounded-lg px-4 text-xs font-mono text-white focus:border-blue-500 outline-none transition-colors placeholder-white/20"
+                        placeholder="public-anon-key"
+                      />
                   </div>
                 </div>
               </div>
 
-              <div className="flex flex-col">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-[10px] font-bold uppercase text-slate-500 ml-1 flex items-center gap-2">
-                    <Terminal className="w-3 h-3" /> SQL Setup
-                  </label>
-                  <button onClick={copySql} className="p-1.5 hover:bg-white/5 rounded-lg text-slate-400 hover:text-white transition-colors flex items-center gap-2 text-[10px] font-bold uppercase">
-                    {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                    {copied ? 'Copied' : 'Copy'}
-                  </button>
-                </div>
-                <div className="flex-1 bg-slate-950/80 rounded-2xl border border-white/5 p-4 font-mono text-[10px] text-blue-300 overflow-y-auto max-h-[220px] scrollbar-hide">
-                  <pre className="whitespace-pre-wrap">{sqlSetup}</pre>
-                </div>
-              </div>
+              <Button 
+                onClick={handleStep1} 
+                disabled={!hasGeminiKey}
+                className="w-full h-14 bg-white hover:bg-slate-200 text-black font-bold uppercase tracking-widest text-xs rounded-xl"
+              >
+                Initialize Subsystems
+              </Button>
             </div>
 
-            <Button 
-              onClick={handleStep1} 
-              disabled={!hasGeminiKey}
-              className="w-full h-14 rounded-2xl bg-white text-slate-950 hover:bg-slate-200 transition-colors font-black uppercase tracking-widest text-xs shadow-xl shadow-white/5 disabled:opacity-30"
-            >
-              Continue to Ignition <Zap className="w-4 h-4 ml-2 fill-current" />
-            </Button>
+            {/* Right Panel: SQL Instructions */}
+            <div className="bg-[#0a0a0a] border border-white/5 rounded-3xl p-8 flex flex-col h-[600px] relative overflow-hidden group">
+               <div className="absolute inset-0 bg-blue-500/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+               <div className="flex items-center justify-between mb-6 relative z-10">
+                  <h3 className="text-white font-mono text-xs uppercase tracking-widest flex items-center gap-2"><Terminal className="w-4 h-4 text-blue-500" /> Database Schema</h3>
+                  <button onClick={copySql} className="text-[10px] font-bold uppercase bg-white/10 hover:bg-white/20 px-3 py-1 rounded text-white transition-colors">
+                    {copied ? "Copied" : "Copy SQL"}
+                  </button>
+               </div>
+               <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent relative z-10">
+                  <pre className="font-mono text-[10px] leading-relaxed text-slate-400 whitespace-pre-wrap selection:bg-blue-500/30">
+                    {sqlSetup}
+                  </pre>
+               </div>
+               <div className="mt-6 pt-6 border-t border-white/5 text-[10px] text-slate-600 leading-relaxed relative z-10">
+                  <Info className="w-3 h-3 inline mr-1" />
+                  Run this SQL in the Supabase SQL Editor. It creates the necessary tables for deck persistence and configures RLS policies to allow this demo to read/write data.
+               </div>
+            </div>
           </motion.div>
         )}
 
         {step === 2 && (
           <motion.div 
             key="step2"
-            initial={{ opacity: 0, x: 100 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, scale: 0.9 }}
-            className="w-full max-w-lg bg-slate-900/40 backdrop-blur-3xl border border-white/10 rounded-[2.5rem] p-12 shadow-2xl relative z-10"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.1, filter: 'blur(20px)' }}
+            className="w-full max-w-2xl"
           >
-            <div className="flex items-center gap-4 mb-8">
-              <div className="p-4 bg-purple-500/20 rounded-2xl text-purple-400"><Cpu className="w-8 h-8" /></div>
-              <div>
-                <h2 className="text-3xl font-black text-white tracking-tight">Step 2</h2>
-                <p className="text-slate-400 font-bold uppercase tracking-[0.2em] text-[10px]">Logic Calibration</p>
-              </div>
-            </div>
-
-            <p className="text-slate-300 mb-8 leading-relaxed font-medium">
-              Checking agent protocols. Testing Gemini 3 Multimodal reasoning and grounding capabilities.
-            </p>
-
-            <div className="bg-slate-950/50 rounded-3xl p-6 border border-white/5 mb-10 min-h-[12rem]">
-              {!isTesting && !testError && (
-                <div className="h-full flex flex-col items-center justify-center py-8">
-                  <ShieldCheck className="w-12 h-12 text-slate-700 mb-4" />
-                  <p className="text-slate-500 text-xs font-bold uppercase tracking-widest text-center">Diagnostics Pipeline Ready</p>
+             <div className="bg-black border border-white/10 rounded-t-2xl p-4 flex items-center justify-between bg-white/5">
+                <div className="flex gap-2">
+                   <div className="w-3 h-3 rounded-full bg-red-500/50" />
+                   <div className="w-3 h-3 rounded-full bg-yellow-500/50" />
+                   <div className="w-3 h-3 rounded-full bg-green-500/50" />
                 </div>
-              )}
+                <div className="font-mono text-[10px] text-white/40 uppercase tracking-widest">Lumina Core Diagnostics</div>
+             </div>
+             
+             <div className="bg-black/80 backdrop-blur-xl border-x border-b border-white/10 rounded-b-2xl p-8 h-[400px] relative overflow-hidden flex flex-col">
+                <div className="absolute inset-0 bg-[linear-gradient(rgba(18,18,18,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] z-0 pointer-events-none bg-[length:100%_2px,3px_100%]" />
+                
+                <div className="relative z-10 flex-1 flex flex-col">
+                    <div ref={logContainerRef} className="flex-1 overflow-y-auto space-y-2 font-mono text-xs">
+                       {!isTesting && !testError && (
+                          <div className="text-white/30 animate-pulse">Waiting for manual start command...</div>
+                       )}
+                       {diagnosticLogs.map((log, i) => (
+                          <div key={i} className="flex items-center gap-3">
+                             <span className="text-slate-600">[{new Date().toLocaleTimeString()}]</span>
+                             <span className={log.success ? "text-emerald-400" : log.success === false ? "text-rose-400" : "text-blue-400"}>
+                                {log.msg}
+                             </span>
+                             {log.success === null && <span className="w-2 h-4 bg-blue-400 animate-pulse block" />}
+                          </div>
+                       ))}
+                       {testError && (
+                          <div className="text-rose-500 mt-4 border-l-2 border-rose-500 pl-4 py-2 bg-rose-500/5">
+                             CRITICAL FAILURE: {testError}
+                          </div>
+                       )}
+                    </div>
 
-              <div className="space-y-3">
-                {diagnosticLogs.map((log, i) => (
-                  <motion.div 
-                    initial={{ opacity: 0, x: -10 }} 
-                    animate={{ opacity: 1, x: 0 }} 
-                    key={i} 
-                    className="flex items-center justify-between text-[11px] font-mono"
-                  >
-                    <span className="text-slate-400">{log.msg}</span>
-                    {log.success === true && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
-                    {log.success === false && <AlertTriangle className="w-4 h-4 text-rose-500" />}
-                    {log.success === null && <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />}
-                  </motion.div>
-                ))}
-              </div>
-
-              {testError && (
-                <div className="mt-4 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-rose-400 text-[10px] font-medium leading-relaxed">
-                  {testError}
-                  <button onClick={() => setStep(1)} className="block mt-2 underline text-white font-bold">Return to Step 1</button>
+                    {!isTesting && (
+                        <div className="mt-8 border-t border-white/10 pt-6">
+                            {testError ? (
+                                <Button onClick={() => setStep(1)} className="w-full bg-white/10 hover:bg-white/20 text-white font-mono text-xs h-12 uppercase tracking-widest">
+                                   Reconfigure System
+                                </Button>
+                            ) : (
+                                <Button onClick={startIgnition} className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-mono font-bold text-xs h-12 uppercase tracking-widest shadow-[0_0_20px_rgba(16,185,129,0.3)]">
+                                   > EXECUTE BOOT SEQUENCE
+                                </Button>
+                            )}
+                        </div>
+                    )}
                 </div>
-              )}
-            </div>
-
-            <Button 
-              onClick={startIgnition} 
-              disabled={isTesting}
-              className="w-full h-16 rounded-3xl bg-purple-600 text-white hover:bg-purple-500 transition-all font-black uppercase tracking-widest text-sm shadow-xl shadow-purple-500/20"
-            >
-              {isTesting ? "Executing Sweep..." : "Start System Ignition"}
-            </Button>
+             </div>
           </motion.div>
         )}
 
         {step === 3 && (
           <motion.div 
             key="step3"
-            initial={{ opacity: 0, scale: 0.5 }}
+            initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="text-center relative z-10"
+            className="flex flex-col items-center justify-center text-center z-10"
           >
-            <motion.div 
-              animate={{ scale: [1, 1.1, 1], rotate: [0, 5, -5, 0] }}
-              transition={{ repeat: Infinity, duration: 3 }}
-              className="w-32 h-32 bg-gradient-to-br from-blue-500 to-purple-600 rounded-[2.5rem] flex items-center justify-center mx-auto mb-8 shadow-2xl shadow-blue-500/40"
-            >
-              <Rocket className="w-16 h-16 text-white" />
-            </motion.div>
-            <h2 className="text-5xl font-black text-white tracking-tighter mb-4">Launch Ready</h2>
-            <p className="text-slate-400 text-lg font-medium mb-12">Lumina Protocol fully calibrated. Strategy agent is online.</p>
-            <Button onClick={onComplete} className="h-16 px-12 rounded-3xl bg-white text-slate-950 font-black uppercase tracking-widest text-sm">
-              Deploy Protocol
+            <div className="relative mb-8">
+               <div className="absolute inset-0 bg-blue-500 blur-[80px] opacity-20 animate-pulse" />
+               <div className="w-24 h-24 bg-gradient-to-tr from-white to-slate-400 rounded-full flex items-center justify-center relative z-10 shadow-2xl">
+                  <Rocket className="w-10 h-10 text-black" />
+               </div>
+            </div>
+            
+            <h1 className="text-6xl font-serif text-white mb-6 tracking-tighter">Lumina Online</h1>
+            <p className="text-slate-400 max-w-md text-lg font-light mb-12">
+               Neural architecture loaded. Veo video engine standby. <br/>Ready to transform your narrative.
+            </p>
+            
+            <Button onClick={onComplete} className="h-16 px-12 bg-white text-black rounded-full font-bold uppercase tracking-[0.2em] text-xs hover:scale-105 transition-transform shadow-[0_0_40px_rgba(255,255,255,0.2)]">
+               Deploy Agent
             </Button>
           </motion.div>
         )}

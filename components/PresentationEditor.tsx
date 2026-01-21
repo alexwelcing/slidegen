@@ -1,11 +1,10 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SlideData, SlideAnalysis, SelectionRect } from '../types';
-import { Play, ChevronRight, ChevronLeft, Layout, Sparkles, MessageSquare, Download, Loader2, AlertCircle, Trash2, Video, RefreshCw, Zap, Maximize2, BrainCircuit, CloudCheck, CloudUpload, Film, FileImage, Settings2, X, Image as ImageIcon, Plus, MousePointer2, Wand2, Type, Eraser, Globe, ExternalLink, Activity } from 'lucide-react';
+import { Play, Layout, Sparkles, Download, Loader2, Video, Maximize2, BrainCircuit, MousePointer2, X, ChevronLeft, ChevronRight, Eye, Type, Palette, Film, Globe, ArrowRight, AlertTriangle, Bug, Layers, Image as ImageIcon, RefreshCcw, Wand2 } from 'lucide-react';
 import { Button } from './Button';
 import { exportToPptx } from '../services/pptxService';
-import { clearProject } from '../services/storageService';
 
 interface PresentationEditorProps {
   slides: SlideData[];
@@ -21,63 +20,75 @@ interface PresentationEditorProps {
   lastSavedAt?: Date | null;
 }
 
+type EditorLens = 'narrative' | 'cinematic';
+
 export const PresentationEditor: React.FC<PresentationEditorProps> = ({ 
   slides, 
   onPlay, 
-  onReset, 
   onUpdateSlide, 
   onGenerateVideo,
-  onGenerateTransitionFromPhoto,
-  onUpgradeHD,
   onDeepAnalyze,
   onEditArea,
-  isSaving,
-  lastSavedAt
+  isSaving
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [lens, setLens] = useState<EditorLens>('narrative');
   const [showOriginal, setShowOriginal] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-  const [videoMode, setVideoMode] = useState<'background' | 'intro'>('background');
-  const [showExportModal, setShowExportModal] = useState(false);
-  const [exportRange, setExportRange] = useState("");
+  const [showDebug, setShowDebug] = useState(false);
   
+  // Debug State Controls
+  const [debugLayerText, setDebugLayerText] = useState(true);
+  const [debugLayerImage, setDebugLayerImage] = useState(true);
+
+  // Image State
+  const [enhancedLoaded, setEnhancedLoaded] = useState(false);
+  const [enhancedError, setEnhancedError] = useState(false);
+  const [transitionPrompt, setTransitionPrompt] = useState("");
+
+  // Selection state
   const [isSelecting, setIsSelecting] = useState(false);
   const [startPos, setStartPos] = useState<{x: number, y: number} | null>(null);
   const [currentRect, setCurrentRect] = useState<SelectionRect | null>(null);
   const [showAreaPrompt, setShowAreaPrompt] = useState(false);
   const [areaPromptText, setAreaPromptText] = useState("");
   
-  const filmstripRef = useRef<HTMLDivElement>(null);
   const slideRef = useRef<HTMLDivElement>(null);
-
+  const filmstripRef = useRef<HTMLDivElement>(null);
+  
   const currentSlide = slides[currentIndex];
 
-  const nextSlide = () => { setCurrentIndex(p => Math.min(slides.length - 1, p + 1)); resetSelection(); }
-  const prevSlide = () => { setCurrentIndex(p => Math.max(0, p - 1)); resetSelection(); }
+  useEffect(() => {
+    setEnhancedLoaded(false);
+    setEnhancedError(false);
+    if (currentSlide.analysis?.suggestedMotion) {
+       setTransitionPrompt(`Cinematic transition: ${currentSlide.analysis.suggestedMotion}`);
+    }
+    if (filmstripRef.current) {
+        const activeItem = filmstripRef.current.children[currentIndex] as HTMLElement;
+        if (activeItem) {
+            activeItem.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }
+    }
+  }, [currentIndex, currentSlide.id, currentSlide.enhancedImage]);
 
-  const resetSelection = () => {
-    setIsSelecting(false);
-    setStartPos(null);
-    setCurrentRect(null);
-    setShowAreaPrompt(false);
-  };
+  const handleNext = () => setCurrentIndex(prev => Math.min(slides.length - 1, prev + 1));
+  const handlePrev = () => setCurrentIndex(prev => Math.max(0, prev - 1));
 
+  const shouldUseEnhanced = !showOriginal && !!currentSlide.enhancedImage && !enhancedError;
+  const shouldBlurBaseLayer = shouldUseEnhanced && !enhancedLoaded;
+
+  const resetSelection = () => { setIsSelecting(false); setStartPos(null); setCurrentRect(null); setShowAreaPrompt(false); };
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!isSelecting || !slideRef.current) return;
     const rect = slideRef.current.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-    setStartPos({ x, y });
-    setCurrentRect({ x, y, width: 0, height: 0 });
-    setShowAreaPrompt(false);
+    setStartPos({ x: ((e.clientX - rect.left) / rect.width) * 100, y: ((e.clientY - rect.top) / rect.height) * 100 });
+    setCurrentRect({ x: 0, y: 0, width: 0, height: 0 });
   };
-
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!startPos || !slideRef.current) return;
     const rect = slideRef.current.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
-    
     setCurrentRect({
       x: Math.min(x, startPos.x),
       y: Math.min(y, startPos.y),
@@ -85,273 +96,275 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
       height: Math.abs(y - startPos.y)
     });
   };
-
   const handleMouseUp = () => {
     if (!isSelecting) return;
-    if (currentRect && currentRect.width > 1 && currentRect.height > 1) {
-      setShowAreaPrompt(true);
-    } else {
-      resetSelection();
-    }
+    if (currentRect && currentRect.width > 2 && currentRect.height > 2) setShowAreaPrompt(true);
+    else resetSelection();
     setStartPos(null);
   };
+  const submitAreaEdit = () => {
+    if (onEditArea && currentRect && areaPromptText) {
+      onEditArea(currentSlide.id, currentRect, areaPromptText);
+      resetSelection();
+      setAreaPromptText("");
+    }
+  };
 
-  const handleAreaPromptSubmit = (promptOverride?: string) => {
-      const finalPrompt = promptOverride || areaPromptText;
-      if (onEditArea && currentRect && finalPrompt.trim()) {
-          onEditArea(currentSlide.id, currentRect, finalPrompt);
-          resetSelection();
-          setAreaPromptText("");
+  const forceAnalysisData = () => {
+    onUpdateSlide(currentSlide.id, {
+      status: 'complete',
+      // Fix: Added missing required property 'assetPrompts' to satisfy SlideAnalysis interface.
+      analysis: {
+        actionTitle: "Debug: Strategic Convergence",
+        subtitle: "Lumina Recovery Subsystem v1.0",
+        keyTakeaways: ["Analysis forced via debug panel", "Layout system re-initialized", "Visual layers verified"],
+        script: "Testing recovery mode.",
+        visualPrompt: "Abstract blue architecture",
+        assetPrompts: [],
+        consultingLayout: 'editorial-left',
+        keywords: ["debug", "recovery"]
       }
+    });
   };
 
-  // Fix: Completely automate motion by removing the manual prompt. 
-  // It uses the AI's suggested motion from analysis.
-  const handleSynthesizeMotion = () => {
-    const motionPrompt = currentSlide.analysis?.suggestedMotion || "Smooth cinematic transition";
-    onGenerateVideo(currentSlide.id, motionPrompt, videoMode);
+  const renderStatusHUD = () => {
+    const status = currentSlide.status;
+    if (!['analyzing', 'generating_image', 'generating_video', 'editing_area'].includes(status)) return null;
+    
+    return (
+      <div className="absolute top-6 right-6 z-[60] bg-black/90 border border-white/20 px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-4 animate-slide-up">
+        <div className="relative w-6 h-6">
+           <div className="absolute inset-0 rounded-full border-2 border-white/10" />
+           <div className="absolute inset-0 rounded-full border-t-2 border-blue-500 animate-spin" />
+        </div>
+        <div>
+           <p className="text-[10px] font-bold uppercase tracking-widest text-white/50 mb-0.5">Gemini Processing</p>
+           <p className="text-xs text-white font-medium">
+              {status === 'analyzing' && "Reading rhetorical structure..."}
+              {status === 'generating_image' && "Painting cinematic visuals..."}
+              {status === 'generating_video' && "Animating transitions..."}
+              {status === 'editing_area' && "Applying magic edit..."}
+           </p>
+        </div>
+      </div>
+    );
   };
 
-  const handleTextChange = (field: keyof SlideAnalysis, value: any) => {
-      if (!currentSlide.analysis) return;
-      onUpdateSlide(currentSlide.id, { 
-          analysis: { ...currentSlide.analysis, [field]: value } 
-      });
-  };
+  const renderSmartLayout = () => {
+    if (!debugLayerText || showOriginal) return null;
+    const analysis = currentSlide.analysis;
+    if (!analysis) return null;
 
-  const getStatusIcon = (status: SlideData['status']) => {
-      switch(status) {
-          case 'analyzing': return <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />;
-          case 'generating_image': return <Loader2 className="w-3 h-3 text-indigo-600 animate-spin" />;
-          case 'generating_video': return <Loader2 className="w-3 h-3 text-purple-600 animate-spin" />;
-          case 'complete': return <div className="w-2 h-2 rounded-full bg-emerald-600 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />;
-          default: return <div className="w-2 h-2 rounded-full bg-slate-300" />;
-      }
-  };
+    const layout = analysis.consultingLayout || 'editorial-left';
 
-  const renderConsultingOverlay = (analysis: SlideAnalysis, status?: SlideData['status']) => {
-      const layout = analysis.consultingLayout || 'data-evidence';
-      
+    const ContentWrapper = ({ children }: { children: React.ReactNode }) => (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-[50] pointer-events-none">
+        {children}
+      </motion.div>
+    );
+
+    if (layout === 'minimal-centered') {
       return (
-          <div className="absolute inset-0 bg-white z-10 font-sans pointer-events-none select-none">
-              <div className="absolute top-0 left-0 w-full h-24 bg-white border-b border-slate-200 px-12 flex flex-col justify-center z-20">
-                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">{analysis.actionTitle}</h2>
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] mt-1">{analysis.subtitle}</p>
-              </div>
-
-              <div className="absolute top-24 left-0 w-full bottom-12 flex px-12 pt-8 gap-12">
-                  <div className={`flex-1 ${layout === 'data-evidence' ? 'w-2/3' : 'w-full'} flex flex-col gap-6`}>
-                      {analysis.keyTakeaways.map((point, i) => (
-                          <div key={i} className="flex gap-4">
-                              <div className="w-1.5 h-1.5 bg-blue-900 mt-2 flex-shrink-0" />
-                              <p className="text-sm text-slate-700 font-medium leading-relaxed">{point}</p>
-                          </div>
-                      ))}
-                  </div>
-              </div>
-
-              {currentSlide.groundingSources && currentSlide.groundingSources.length > 0 && (
-                <div className="absolute bottom-16 left-12 flex flex-wrap gap-2 z-30">
-                  {currentSlide.groundingSources.map((src, i) => (
-                    <div key={i} className="flex items-center gap-1.5 px-2 py-1 bg-blue-50 text-[8px] font-bold text-blue-700 rounded border border-blue-100">
-                      <Globe className="w-2 h-2" />
-                      {src.title || "Source"}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="absolute bottom-0 left-0 w-full h-12 border-t border-slate-200 bg-white px-12 flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-widest font-bold">
-                  <div className="flex items-center gap-4">
-                    <span>Lumina Strategy Group</span>
-                    <span className="w-px h-3 bg-slate-200" />
-                    <span>Verified Insight</span>
-                  </div>
-                  <span>Slide {currentIndex + 1}</span>
-              </div>
+        <ContentWrapper>
+          <div className="h-full flex flex-col items-center justify-center text-center p-20">
+             <h1 className="font-serif text-7xl text-white font-bold mb-8 max-w-4xl drop-shadow-2xl">{analysis.actionTitle}</h1>
+             <div className="h-1 w-32 bg-blue-500 mb-8" />
+             <p className="font-sans text-sm font-bold uppercase tracking-[0.3em] text-blue-200 mb-12">{analysis.subtitle}</p>
+             <div className="flex gap-4">
+               {analysis.keyTakeaways.map((pt, i) => (
+                  <div key={i} className="max-w-[200px] text-white/80 text-sm bg-black/50 p-4 rounded-xl border border-white/10">{pt}</div>
+               ))}
+             </div>
           </div>
+        </ContentWrapper>
       );
+    }
+
+    if (layout === 'editorial-left') {
+      return (
+        <ContentWrapper>
+          <div className="h-full w-[45%] bg-gradient-to-r from-black/95 via-black/80 to-transparent p-12 flex flex-col justify-center">
+             <div className="mb-auto mt-12">
+               <p className="font-sans text-[10px] font-bold uppercase tracking-[0.2em] text-blue-400 mb-4">{analysis.subtitle}</p>
+               <h1 className="font-serif text-5xl text-white font-medium mb-6 drop-shadow-lg">{analysis.actionTitle}</h1>
+               <div className="h-1 w-16 bg-white/20 mb-8" />
+             </div>
+             <div className="space-y-6">
+               {analysis.keyTakeaways.map((pt, i) => (
+                 <div key={i} className="flex gap-4 items-start"><span className="font-mono text-white/30 text-xs mt-1.5">0{i+1}</span><p className="font-sans text-base text-white/80 font-light leading-relaxed">{pt}</p></div>
+               ))}
+             </div>
+          </div>
+        </ContentWrapper>
+      );
+    }
+
+    // Default Fallback Layout
+    return (
+      <ContentWrapper>
+        <div className="h-full flex flex-col justify-between">
+          <div className="bg-gradient-to-b from-black/90 to-transparent p-12"><h1 className="font-serif text-4xl text-white font-semibold mb-2">{analysis.actionTitle}</h1><p className="text-sm font-sans text-white/70 uppercase tracking-widest">{analysis.subtitle}</p></div>
+          <div className="bg-gradient-to-t from-black/95 to-transparent p-12 grid grid-cols-3 gap-8">
+             {analysis.keyTakeaways.slice(0,3).map((pt, i) => (
+               <div key={i} className="border-t border-blue-500/50 pt-4"><p className="text-sm text-white/90 leading-relaxed">{pt}</p></div>
+             ))}
+          </div>
+        </div>
+      </ContentWrapper>
+    );
   };
 
   return (
-    <div className="h-screen flex flex-col bg-slate-950 text-slate-900 font-sans">
-      <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 sticky top-0 z-40">
-        <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-blue-950 flex items-center justify-center rounded">
-                <Layout className="w-4 h-4 text-white" />
-            </div>
-            <h1 className="font-bold text-xs uppercase tracking-widest text-slate-900">Lumina Agent</h1>
-            <div className="flex items-center gap-2 ml-4">
-                <div className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-tighter text-slate-400">
-                    {isSaving ? <><Loader2 className="w-3 h-3 animate-spin text-blue-500" /><span>Syncing to Supabase</span></> : <><CloudCheck className="w-3 h-3 text-emerald-500" /><span>History Secure</span></>}
-                </div>
-            </div>
-        </div>
+    <div className="h-screen bg-black text-white overflow-hidden flex flex-col font-sans selection:bg-blue-500/30">
+      
+      {/* GLOBAL DEBUG OVERLAY */}
+      {showDebug && (
+        <div className="fixed top-20 left-4 z-[100] bg-zinc-900 text-green-400 font-mono text-[10px] p-5 rounded-2xl border border-white/10 max-w-sm shadow-2xl pointer-events-auto">
+          <h4 className="font-bold border-b border-white/10 mb-3 pb-2 flex justify-between items-center text-white">
+            <span className="flex items-center gap-2"><Bug className="w-3 h-3 text-green-500" /> INSPECTOR</span>
+            <span className="opacity-50">{currentIndex + 1}/{slides.length}</span>
+          </h4>
+          <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 opacity-80">
+                 <div>STATUS: <span className="text-white">{currentSlide.status}</span></div>
+                 <div>ANALYSIS: <span className={currentSlide.analysis ? "text-green-500" : "text-red-500"}>{currentSlide.analysis ? "YES" : "NO"}</span></div>
+                 <div>VIEW: <span className="text-white">{showOriginal ? "RAW" : "LUMINA"}</span></div>
+                 <div>LENS: <span className="text-white">{lens}</span></div>
+              </div>
 
-        <div className="absolute left-1/2 -translate-x-1/2 flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 shadow-sm">
-             <button onClick={() => setIsSelecting(!isSelecting)} className={`p-2 rounded transition-all flex items-center gap-2 ${isSelecting ? 'bg-blue-600 text-white shadow-inner' : 'text-slate-500 hover:bg-slate-200'}`}>
-                <MousePointer2 className="w-4 h-4" />
-                {isSelecting && <span className="text-[9px] font-bold uppercase tracking-widest pr-1">Spatial Co-pilot</span>}
-             </button>
-             <div className="w-px h-4 bg-slate-300 mx-1" />
-             <button onClick={() => setShowOriginal(false)} className={`px-4 py-1.5 text-[10px] font-bold uppercase rounded ${!showOriginal ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-500'}`}>Agent View</button>
-             <button onClick={() => setShowOriginal(true)} className={`px-4 py-1.5 text-[10px] font-bold uppercase rounded ${showOriginal ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-500'}`}>Raw Data</button>
-        </div>
+              <div className="pt-2 border-t border-white/10">
+                  <p className="text-white/50 mb-2 font-bold">TROUBLESHOOTING</p>
+                  <div className="flex flex-wrap gap-2">
+                     <button onClick={() => setDebugLayerText(!debugLayerText)} className={`px-2 py-1 border rounded ${debugLayerText ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-white/20 text-white/40'}`}>Toggle Text</button>
+                     <button onClick={() => setDebugLayerImage(!debugLayerImage)} className={`px-2 py-1 border rounded ${debugLayerImage ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-white/20 text-white/40'}`}>Toggle Gfx</button>
+                     <button onClick={forceAnalysisData} className="px-2 py-1 bg-blue-600 text-white rounded flex items-center gap-1"><Wand2 className="w-3 h-3" /> Force Layout</button>
+                  </div>
+              </div>
 
+              <div className="pt-2 border-t border-white/10">
+                  <p className="text-white/50 mb-2 font-bold">RAW ASSET PREVIEW</p>
+                  <div className="w-full aspect-video bg-black rounded border border-white/10 overflow-hidden">
+                     <img src={currentSlide.originalImage} className="w-full h-full object-contain" />
+                  </div>
+              </div>
+          </div>
+        </div>
+      )}
+
+      <header className="h-16 flex items-center justify-between px-8 bg-black border-b border-white/5">
         <div className="flex items-center gap-3">
-            <Button variant="ghost" onClick={onPlay} className="h-9 px-3 text-[10px] uppercase tracking-widest font-black"><Play className="w-3 h-3 mr-2" /> Preview</Button>
-            <Button variant="primary" onClick={() => setShowExportModal(true)} className="h-9 px-4 text-[10px] uppercase tracking-widest font-black bg-blue-950 text-white">Export</Button>
+          <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-900/40">
+            <Layout className="w-4 h-4 text-white" />
+          </div>
+          <span className="font-serif text-lg tracking-tight">Lumina Studio</span>
+        </div>
+        
+        <div className="flex items-center gap-4">
+          {isSaving && <span className="text-[10px] font-mono text-white/40 animate-pulse uppercase tracking-widest">Saving...</span>}
+          <button onClick={() => setShowDebug(!showDebug)} className={`p-2 rounded-full transition-colors ${showDebug ? 'bg-red-500 text-white' : 'hover:bg-white/10 text-white/30'}`}><Bug className="w-4 h-4" /></button>
+          <button onClick={() => exportToPptx(slides)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/70"><Download className="w-4 h-4" /></button>
+          <Button onClick={onPlay} className="h-9 px-6 rounded-full bg-white text-black font-bold text-[10px] uppercase tracking-widest">Present</Button>
         </div>
       </header>
 
-      <div className="flex-1 flex overflow-hidden">
-        <div className="flex-1 bg-slate-100 relative flex flex-col">
-            <div className="flex-1 flex items-center justify-center p-12 relative group">
-                <button onClick={prevSlide} disabled={currentIndex === 0} className="absolute left-6 p-4 rounded-full text-slate-400 hover:text-slate-900 hover:bg-white transition-all disabled:opacity-0 z-20 shadow-xl border border-white/40 backdrop-blur-md"><ChevronLeft className="w-8 h-8" /></button>
-                
-                <div 
-                  ref={slideRef}
-                  onMouseDown={handleMouseDown}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
-                  className={`relative w-full max-w-5xl aspect-video bg-white shadow-[0_25px_50px_-12px_rgba(0,0,0,0.1)] overflow-hidden ${isSelecting ? 'cursor-crosshair' : 'cursor-default'}`}
-                >
-                    <img src={currentSlide.originalImage} className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${showOriginal ? 'opacity-100' : 'opacity-0'}`} alt="Original" />
-                    {!showOriginal && (
-                        <>
-                            {currentSlide.videoUrl && (
-                                <video src={currentSlide.videoUrl} autoPlay loop muted className="absolute inset-0 w-full h-full object-cover opacity-80 mix-blend-multiply" />
-                            )}
-                            {currentSlide.enhancedImage && !currentSlide.videoUrl && (
-                                <img src={currentSlide.enhancedImage} className="absolute inset-0 w-full h-full object-cover opacity-40 mix-blend-multiply" alt="Enhanced" />
-                            )}
-                            {currentSlide.analysis ? renderConsultingOverlay(currentSlide.analysis, currentSlide.status) : (
-                                <div className="absolute inset-0 bg-slate-50 flex flex-col items-center justify-center gap-4">
-                                    <div className="w-12 h-12 border-2 border-blue-900/20 border-t-blue-900 rounded-full animate-spin" />
-                                    <p className="text-[10px] uppercase font-bold tracking-[0.2em] text-slate-400">Synthesizing Insight...</p>
-                                </div>
-                            )}
-                        </>
+      <main className="flex-1 relative flex items-center justify-center p-8 bg-[#0a0a0a]">
+        
+        <button onClick={handlePrev} className="absolute left-8 p-4 rounded-full hover:bg-white/5 text-white/20 hover:text-white transition-all z-[70]"><ChevronLeft className="w-8 h-8" /></button>
+        <button onClick={handleNext} className="absolute right-8 p-4 rounded-full hover:bg-white/5 text-white/20 hover:text-white transition-all z-[70]"><ChevronRight className="w-8 h-8" /></button>
+
+        <div 
+          ref={slideRef}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          className="relative aspect-video w-full max-w-[1280px] bg-black rounded-lg shadow-2xl overflow-hidden border border-white/10"
+          style={{
+             backgroundImage: 'linear-gradient(45deg, #111 25%, transparent 25%), linear-gradient(-45deg, #111 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #111 75%), linear-gradient(-45deg, transparent 75%, #111 75%)',
+             backgroundSize: '20px 20px',
+             backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
+          }}
+        >
+            {renderStatusHUD()}
+
+            {/* BASE IMAGE LAYER */}
+            {debugLayerImage && (
+                <div className="absolute inset-0">
+                    <img 
+                      src={currentSlide.originalImage} 
+                      className={`absolute inset-0 w-full h-full object-contain transition-all duration-700 ${shouldBlurBaseLayer ? 'blur-2xl opacity-40 scale-105' : 'opacity-100'}`} 
+                      alt="Original"
+                    />
+
+                    {shouldUseEnhanced && (
+                      <img 
+                        src={currentSlide.enhancedImage} 
+                        onLoad={() => setEnhancedLoaded(true)}
+                        onError={() => setEnhancedError(true)}
+                        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ${enhancedLoaded ? 'opacity-100' : 'opacity-0'}`} 
+                        alt="Enhanced"
+                      />
                     )}
 
-                    {currentRect && (
-                        <motion.div className="absolute border-2 border-blue-500 bg-blue-500/10 z-50 pointer-events-none" style={{ left: `${currentRect.x}%`, top: `${currentRect.y}%`, width: `${currentRect.width}%`, height: `${currentRect.height}%` }} />
-                    )}
-
-                    <AnimatePresence>
-                        {showAreaPrompt && currentRect && (
-                            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="absolute z-[60] bg-white rounded-2xl shadow-2xl p-5 w-80 border border-slate-200" style={{ left: `${currentRect.x}%`, top: `${currentRect.y + currentRect.height}%` }}>
-                                <div className="flex items-center gap-2 mb-4 text-blue-600">
-                                    <Activity className="w-4 h-4" />
-                                    <span className="text-[10px] font-bold uppercase tracking-widest">Logic Refinement</span>
-                                </div>
-                                <textarea value={areaPromptText} onChange={(e) => setAreaPromptText(e.target.value)} className="w-full h-20 p-3 bg-slate-50 border border-slate-200 text-xs rounded-xl focus:ring-2 focus:ring-blue-500 outline-none resize-none mb-4" placeholder="Update logic for this region..." />
-                                <div className="flex gap-2">
-                                  <button onClick={() => handleAreaPromptSubmit()} className="flex-1 py-2 bg-blue-600 text-white rounded-xl text-[10px] font-bold uppercase">Apply Change</button>
-                                  <button onClick={resetSelection} className="p-2 text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
-                                </div>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
+                    {!showOriginal && <div className="absolute inset-0 bg-black/30 pointer-events-none" />}
                 </div>
+            )}
 
-                <button onClick={nextSlide} disabled={currentIndex === slides.length - 1} className="absolute right-6 p-4 rounded-full text-slate-400 hover:text-slate-900 hover:bg-white transition-all disabled:opacity-0 z-20 shadow-xl border border-white/40 backdrop-blur-md"><ChevronRight className="w-8 h-8" /></button>
-            </div>
-
-            <div className="h-28 bg-white border-t border-slate-200 flex flex-col">
-                <div className="px-4 py-1.5 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2"><Globe className="w-3 h-3" /> Live Analysis Pipeline</span>
-                </div>
-                <div ref={filmstripRef} className="flex-1 flex items-center gap-3 px-4 overflow-x-auto scrollbar-hide">
-                    {slides.map((s, idx) => (
-                        <button key={s.id} onClick={() => setCurrentIndex(idx)} className={`relative flex-shrink-0 w-28 aspect-video border-2 transition-all rounded overflow-hidden ${idx === currentIndex ? 'border-blue-900 scale-105 shadow-lg' : 'border-transparent opacity-40 hover:opacity-100'}`}>
-                            <img src={s.originalImage} className="w-full h-full object-cover" alt={`Thumb ${idx}`} />
-                            <div className="absolute top-1 right-1">{getStatusIcon(s.status)}</div>
-                            <div className="absolute bottom-0 left-0 bg-blue-950 text-white px-1.5 py-0.5 text-[8px] font-bold">{idx + 1}</div>
-                        </button>
-                    ))}
-                </div>
-            </div>
-        </div>
-
-        <div className="w-80 bg-white border-l border-slate-200 flex flex-col">
-            <div className="h-14 border-b border-slate-200 flex items-center px-6 bg-slate-50 justify-between">
-                <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Motion Sequence</h3>
-                <Settings2 className="w-4 h-4 text-slate-300" />
-            </div>
-            <div className="flex-1 overflow-y-auto p-6 space-y-8">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between mb-4">
-                    <label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Synthesis Mode</label>
-                    <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
-                      <button onClick={() => setVideoMode('background')} className={`px-3 py-1.5 text-[9px] font-bold uppercase rounded-lg transition-all ${videoMode === 'background' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}>Background</button>
-                      <button onClick={() => setVideoMode('intro')} className={`px-3 py-1.5 text-[9px] font-bold uppercase rounded-lg transition-all ${videoMode === 'intro' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}>Intro</button>
-                    </div>
-                  </div>
-                  
-                  <div className="space-y-3">
-                    <button 
-                      onClick={handleSynthesizeMotion}
-                      disabled={currentSlide.status === 'generating_video'}
-                      className="group relative w-full p-6 bg-slate-900 rounded-2xl overflow-hidden flex flex-col items-center justify-center border-2 border-transparent hover:border-blue-500 transition-all disabled:opacity-50"
-                    >
-                      <Sparkles className="w-8 h-8 text-blue-400 mb-3 group-hover:scale-110 transition-transform" />
-                      <span className="text-[10px] font-bold uppercase text-white tracking-[0.2em]">Automated Synthesis</span>
-                      <p className="mt-1 text-[8px] text-blue-300/60 font-medium uppercase">{currentSlide.analysis?.suggestedMotion || "Smart Transition"}</p>
-                      <div className="absolute inset-0 bg-gradient-to-t from-blue-900/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </button>
-                    
-                    <p className="text-[9px] text-slate-400 font-medium leading-relaxed px-1">
-                      {videoMode === 'intro' 
-                        ? "Generates a high-fidelity cinematic sequence played before the slide content."
-                        : "Creates a subtle loop that plays behind the strategy logic during presentation."
-                      }
-                    </p>
-                  </div>
-                </div>
-
-                <div className="pt-8 border-t border-slate-100">
-                    <Button onClick={() => onDeepAnalyze(currentSlide.id)} disabled={currentSlide.status === 'analyzing'} className="w-full bg-slate-900 text-white rounded-2xl h-12 text-[10px] uppercase font-bold tracking-[0.2em] shadow-xl shadow-slate-900/20">
-                        <BrainCircuit className="w-4 h-4 mr-2" /> 32K Thinking
-                    </Button>
-                    <p className="mt-3 text-[8px] text-center text-slate-400 font-bold uppercase tracking-widest">Execute Pro-Logic reasoning</p>
-                </div>
-            </div>
-        </div>
-      </div>
-
-      <AnimatePresence>
-        {showExportModal && (
-          <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
-            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-white rounded-2xl p-8 w-full max-w-md shadow-2xl">
-              <div className="flex justify-between items-center mb-6">
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-blue-100 rounded-xl text-blue-600"><Settings2 className="w-6 h-6" /></div>
-                  <h2 className="text-xl font-bold tracking-tight text-slate-900">Export Deck</h2>
-                </div>
-                <button onClick={() => setShowExportModal(false)} className="p-2 hover:bg-slate-100 rounded-full"><X className="w-5 h-5" /></button>
-              </div>
-              <div className="space-y-6">
-                <div className="grid grid-cols-2 gap-3 pt-2">
-                  <button onClick={async () => {
-                    setIsExporting(true);
-                    await exportToPptx(slides);
-                    setIsExporting(false);
-                    setShowExportModal(false);
-                  }} disabled={isExporting} className="flex flex-col items-center justify-center p-8 border border-slate-100 rounded-3xl hover:bg-blue-50 hover:border-blue-100 transition-all gap-3 group">
-                    {isExporting ? <Loader2 className="w-8 h-8 animate-spin text-blue-600" /> : <Download className="w-8 h-8 text-blue-600" />}
-                    <span className="text-[10px] font-bold uppercase tracking-widest">Powerpoint</span>
-                  </button>
-                  <button onClick={() => setShowExportModal(false)} className="flex flex-col items-center justify-center p-8 border border-slate-100 rounded-3xl hover:bg-slate-50 transition-all gap-3 group">
-                    <FileImage className="w-8 h-8 text-indigo-600" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest">Image Archive</span>
-                  </button>
+            {renderSmartLayout()}
+            
+            {/* Cinematic Lens */}
+            {!showOriginal && lens === 'cinematic' && (
+              <div className="absolute inset-0 z-[60] flex items-center justify-center p-8 bg-black/60 pointer-events-auto">
+                <div className="bg-zinc-900 p-8 rounded-3xl border border-white/10 w-full max-w-lg shadow-2xl flex flex-col gap-6">
+                   <div className="flex items-center gap-3 border-b border-white/10 pb-4">
+                      <Film className="w-5 h-5 text-blue-400" />
+                      <h3 className="font-serif text-xl">Transition Director</h3>
+                   </div>
+                   <textarea 
+                     value={transitionPrompt} onChange={(e) => setTransitionPrompt(e.target.value)}
+                     className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-xs text-white outline-none focus:border-blue-500 h-24"
+                     placeholder="Camera motion prompt..."
+                   />
+                   <div className="flex gap-2">
+                      <Button onClick={() => onGenerateVideo(currentSlide.id, transitionPrompt, 'intro')} disabled={currentSlide.status === 'generating_video'} className="flex-1 text-[10px] uppercase font-bold tracking-widest bg-blue-600">
+                        {currentSlide.status === 'generating_video' ? "Generating..." : "Generate Motion"}
+                      </Button>
+                   </div>
                 </div>
               </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+            )}
+        </div>
+      </main>
+
+      <footer className="h-20 border-t border-white/5 bg-black flex items-center justify-between px-8 z-[80]">
+         <div className="flex items-center gap-6">
+            <div className="flex gap-1 bg-white/5 p-1 rounded-xl border border-white/10">
+               <button onClick={() => setLens('narrative')} className={`px-5 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${lens === 'narrative' ? 'bg-white text-black' : 'text-white/40'}`}>Narrative</button>
+               <button onClick={() => setLens('cinematic')} className={`px-5 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${lens === 'cinematic' ? 'bg-blue-600 text-white' : 'text-white/40'}`}>Cinematic</button>
+            </div>
+            <div className="h-8 w-px bg-white/10" />
+            <button onClick={() => setShowOriginal(!showOriginal)} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 ${showOriginal ? 'text-blue-400' : 'text-white/40 hover:text-white'}`}>
+               <Eye className="w-3 h-3" /> {showOriginal ? 'Raw PDF' : 'Lumina View'}
+            </button>
+         </div>
+
+         <div 
+            ref={filmstripRef}
+            className="flex items-center gap-2 h-14 overflow-x-auto px-4 max-w-[40vw] scrollbar-hide"
+         >
+             {slides.map((s, i) => (
+               <button key={s.id} onClick={() => setCurrentIndex(i)} className={`h-full aspect-video rounded-md overflow-hidden border transition-all flex-shrink-0 ${i === currentIndex ? 'border-white scale-110 z-10 shadow-lg' : 'border-white/10 opacity-30 hover:opacity-100'}`}>
+                 <img src={s.originalImage} className="w-full h-full object-cover" />
+               </button>
+             ))}
+         </div>
+
+         <div className="flex items-center gap-6">
+            <button onClick={() => onDeepAnalyze(currentSlide.id)} className="text-[10px] font-bold uppercase tracking-widest text-white/30 hover:text-blue-400 flex items-center gap-2">
+               <BrainCircuit className="w-3 h-3" /> Re-Analyze
+            </button>
+            <div className="text-[10px] text-white/20 font-mono">SLIDE {currentIndex + 1} OF {slides.length}</div>
+         </div>
+      </footer>
     </div>
   );
 };

@@ -1,3 +1,4 @@
+
 /**
  * Handles PDF loading and rendering to images using PDF.js
  */
@@ -26,6 +27,11 @@ export const convertPdfToImages = async (file: File): Promise<string[]> => {
 
     canvas.height = viewport.height;
     canvas.width = viewport.width;
+
+    // CRITICAL FIX: Force white background. 
+    // Many PDFs have transparent backgrounds which turn invisible in dark mode.
+    context.fillStyle = '#FFFFFF';
+    context.fillRect(0, 0, canvas.width, canvas.height);
 
     await page.render({
       canvasContext: context,

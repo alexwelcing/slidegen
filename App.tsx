@@ -1,10 +1,11 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Upload, FileType, Key, ExternalLink } from 'lucide-react';
+import { Upload, FileType, Key, ExternalLink, Sparkles } from 'lucide-react';
 import { convertPdfToImages } from './services/pdfService';
 import { analyzeSlideContent, generateSlideVisual, generateVideoFromImage, deepAnalyzeSlide, performAreaEdit } from './services/geminiService';
 import { loadProject, saveProject, updatePersistentSlide } from './services/storageService';
 import { uploadMedia, logTask, persistDeck, isSupabaseConfigured } from './services/supabaseService';
+import { createDemoDeck } from './services/demoService';
 import { SlideData, AppMode, ProcessingStats, GeneratedAsset, SelectionRect } from './types';
 import { Button } from './components/Button';
 import { ProcessingView } from './components/ProcessingView';
@@ -199,6 +200,12 @@ export default function App() {
        } catch { setMode(AppMode.UPLOAD); }
     }
   };
+  
+  const handleLoadDemo = () => {
+    const demoSlides = createDemoDeck();
+    setSlides(demoSlides);
+    setMode(AppMode.EDITOR);
+  };
 
   const stats: ProcessingStats = {
     totalSlides: slides.length,
@@ -216,8 +223,8 @@ export default function App() {
         onReset={() => { setSlides([]); setMode(AppMode.UPLOAD); }} 
         onUpdateSlide={handleUpdateSlide} 
         onGenerateVideo={handleGenerateVideo} 
-        onGenerateTransitionFromPhoto={() => {}} // Placeholder
-        onUpgradeHD={() => {}} // Placeholder
+        onGenerateTransitionFromPhoto={() => {}} 
+        onUpgradeHD={() => {}}
         onDeepAnalyze={handleDeepAnalyze}
         onEditArea={async (id, rect, prompt) => {
           const index = slidesRef.current.findIndex(s => s.id === id);
@@ -236,14 +243,38 @@ export default function App() {
   if (mode === AppMode.PRESENT) return <Player slides={slides} onExit={() => setMode(AppMode.EDITOR)} />;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4">
-      <div className="max-w-xl w-full text-center">
-        <h1 className="text-5xl font-bold text-white mb-6 tracking-tighter">Lumina Agent</h1>
-        <p className="text-slate-400 text-lg mb-12 font-light">Self-perfecting strategy deck builder. Enhanced with Gemini 3 Pro reasoning.</p>
-        <div className="border-2 border-dashed border-slate-700 bg-slate-900/30 rounded-3xl p-16 transition-all hover:border-blue-500/50">
-            <FileType className="w-16 h-16 text-slate-600 mx-auto mb-8" />
-            <input type="file" accept="application/pdf" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-            <Button className="w-full bg-white text-slate-950 font-bold uppercase tracking-widest h-16 rounded-2xl">Upload PDF Strategy</Button>
+    <div className="min-h-screen bg-[#050505] text-white flex flex-col items-center justify-center p-6 relative overflow-hidden font-sans">
+      <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: 'linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
+      <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent pointer-events-none" />
+
+      <div className="max-w-xl w-full text-center relative z-10">
+        <div className="mb-8 inline-block p-4 rounded-full bg-white/5 border border-white/10 backdrop-blur-md">
+            <FileType className="w-8 h-8 text-white" />
+        </div>
+        <h1 className="text-6xl font-serif font-bold text-white mb-6 tracking-tighter">Lumina Agent</h1>
+        <p className="text-slate-400 text-lg mb-12 font-light leading-relaxed">
+          Upload your strategy deck. <br/>
+          <span className="text-blue-400 font-mono text-sm uppercase tracking-widest">Gemini 3 Pro + Veo 3.1</span> will handle the rest.
+        </p>
+        
+        <div className="flex flex-col gap-4">
+            <div className="relative group">
+                <div className="absolute inset-0 bg-blue-500 blur-2xl opacity-20 group-hover:opacity-40 transition-opacity" />
+                <div className="relative border border-dashed border-white/20 bg-black/40 backdrop-blur-xl rounded-3xl p-16 transition-all hover:border-blue-500/50 hover:bg-black/60 flex flex-col items-center gap-6">
+                    <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center">
+                        <Upload className="w-8 h-8 text-slate-300" />
+                    </div>
+                    <div className="text-center">
+                        <p className="text-white font-bold uppercase tracking-widest text-sm mb-2">Drag & Drop PDF</p>
+                        <p className="text-slate-500 text-xs">or click to browse filesystem</p>
+                    </div>
+                    <input type="file" accept="application/pdf" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                </div>
+            </div>
+
+            <Button onClick={handleLoadDemo} variant="secondary" className="w-full text-xs uppercase tracking-widest bg-white/5 hover:bg-white/10 border-white/10">
+                <Sparkles className="w-4 h-4 mr-2" /> Load Demo Deck (Agentic Engineering)
+            </Button>
         </div>
       </div>
     </div>

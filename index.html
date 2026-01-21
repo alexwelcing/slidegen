@@ -14,30 +14,29 @@
           extend: {
             colors: {
               lumina: {
-                900: '#020617',
-                800: '#0f172a',
-                700: '#1e293b',
-                600: '#334155',
-                500: '#3b82f6',
-                accent: '#f43f5e',
+                base: '#0a0a0a',
+                surface: '#171717',
+                highlight: '#262626',
+                accent: '#3b82f6',
               }
             },
             fontFamily: {
               sans: ['Inter', 'sans-serif'],
+              serif: ['Playfair Display', 'serif'],
+              mono: ['JetBrains Mono', 'monospace'],
             },
             animation: {
-              'pulse-fast': 'pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-              'float': 'float 6s ease-in-out infinite',
-              'shimmer': 'shimmer 2s infinite linear',
+              'fade-in': 'fadeIn 0.5s ease-out',
+              'slide-up': 'slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1)',
             },
             keyframes: {
-              float: {
-                '0%, 100%': { transform: 'translateY(0)' },
-                '50%': { transform: 'translateY(-20px)' },
+              fadeIn: {
+                '0%': { opacity: '0' },
+                '100%': { opacity: '1' },
               },
-              shimmer: {
-                '0%': { backgroundPosition: '-200% 0' },
-                '100%': { backgroundPosition: '200% 0' },
+              slideUp: {
+                '0%': { transform: 'translateY(20px)', opacity: '0' },
+                '100%': { transform: 'translateY(0)', opacity: '1' },
               }
             }
           },
@@ -45,16 +44,27 @@
       };
       window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     </script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,600;0,800;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
       body {
-        background-color: #020617;
-        color: #f8fafc;
+        background-color: #050505;
+        color: #e5e5e5;
         font-family: 'Inter', sans-serif;
+        -webkit-font-smoothing: antialiased;
       }
-      ::-webkit-scrollbar { width: 4px; height: 4px; }
-      ::-webkit-scrollbar-track { background: #020617; }
-      ::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+      .font-serif { font-family: 'Playfair Display', serif; }
+      .font-mono { font-family: 'JetBrains Mono', monospace; }
+      
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+      ::-webkit-scrollbar-thumb:hover { background: #555; }
+      
+      .glass-panel {
+        background: rgba(20, 20, 20, 0.6);
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
     </style>
   <script type="importmap">
 {

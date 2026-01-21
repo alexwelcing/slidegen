@@ -32,28 +32,18 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
 
 const cleanAndParseJSON = (text: string | undefined | null): any => {
     if (!text) return {};
-    // Step 1: Remove Markdown code blocks
     let cleaned = text.replace(/```json\s*([\s\S]*?)\s*```/gi, '$1').trim();
     cleaned = cleaned.replace(/^```\s*([\s\S]*?)\s*```$/g, '$1').trim();
-    
-    // Step 2: Aggressively remove Gemini Grounding Citations like [1], [2], [3]
-    // These appear when googleSearch is used and break JSON parsing.
-    cleaned = cleaned.replace(/\[\d+\]/g, '');
-
-    // Step 3: Find the first brace and last brace
+    cleaned = cleaned.replace(/\[\d+\]/g, ''); // Remove citations
     const firstBrace = cleaned.indexOf('{');
     const lastBrace = cleaned.lastIndexOf('}');
     if (firstBrace !== -1 && lastBrace !== -1) {
         cleaned = cleaned.substring(firstBrace, lastBrace + 1);
     }
-
     try {
         return JSON.parse(cleaned);
     } catch (e) {
-        console.warn("JSON Parse failed, attempting fallback recovery:", e);
-        // Fallback: Remove trailing commas and fix common structural errors
-        let fixed = cleaned;
-        fixed = fixed.replace(/,\s*([}\]])/g, '$1');
+        let fixed = cleaned.replace(/,\s*([}\]])/g, '$1');
         const openBraces = (fixed.match(/{/g) || []).length;
         const closeBraces = (fixed.match(/}/g) || []).length;
         fixed += '}'.repeat(Math.max(0, openBraces - closeBraces));
@@ -61,18 +51,13 @@ const cleanAndParseJSON = (text: string | undefined | null): any => {
     }
 };
 
-/**
- * Diagnostic suite to ensure the environment is ready.
- */
 export const runSystemDiagnostics = async (onProgress: (status: string, success: boolean | null) => void) => {
     const ai = getAI();
-    
-    // 1. Flash Text/Search Test
     try {
         onProgress('Testing Gemini 3 Flash (Search/Text)...', null);
         await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
-            contents: 'Lumina system check. Reply with "OK".',
+            contents: 'Lumina system check.',
             config: { maxOutputTokens: 10 }
         });
         onProgress('Gemini 3 Flash: Online', true);
@@ -81,16 +66,12 @@ export const runSystemDiagnostics = async (onProgress: (status: string, success:
         throw e;
     }
 
-    // 2. Pro Reasoning Test
     try {
-        onProgress('Testing Gemini 3 Pro (Thinking/Logic)...', null);
+        onProgress('Testing Gemini 3 Pro (Reasoning)...', null);
         await ai.models.generateContent({
             model: 'gemini-3-pro-preview',
-            contents: 'Test complex reasoning capability.',
-            config: { 
-                thinkingConfig: { thinkingBudget: 1024 },
-                maxOutputTokens: 50
-            }
+            contents: 'Test.',
+            config: { thinkingConfig: { thinkingBudget: 1024 }, maxOutputTokens: 10 }
         });
         onProgress('Gemini 3 Pro: Online', true);
     } catch (e) {
@@ -98,21 +79,6 @@ export const runSystemDiagnostics = async (onProgress: (status: string, success:
         throw e;
     }
 
-    // 3. Image Gen Test (Flash Image)
-    try {
-        onProgress('Testing Gemini 2.5 Flash Image...', null);
-        await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: 'Lumina system check image test. A simple blue circle.',
-            config: { maxOutputTokens: 500 }
-        });
-        onProgress('Gemini 2.5 Image: Online', true);
-    } catch (e) {
-        onProgress('Gemini 2.5 Image: Failed', false);
-        throw e;
-    }
-
-    // 4. Video Capability Check
     onProgress('Verifying Veo 3.1 Video Engine...', null);
     onProgress('Veo 3.1 Video: Online', true);
 };
@@ -122,13 +88,35 @@ export const analyzeSlideContent = async (base64Image: string): Promise<{ analys
     const ai = getAI();
     const cleanBase64 = base64Image.split(',')[1];
     
-    // Using Gemini 3 Pro for initial analysis to ensure search results don't break JSON structure
+    // We explicitly ask for "editorial" aesthetic outputs
     const response = await ai.models.generateContent({
       model: "gemini-3-pro-preview",
       contents: {
         parts: [
           { inlineData: { mimeType: "image/jpeg", data: cleanBase64 } },
-          { text: "Act as a Lead Strategy Analyst. Use Google Search to verify any figures or claims in this slide. Extract key takeaways and suggest a cinematic motion (e.g. 'slow drone sweep over city', 'dynamic camera pull back') for a video background. Output ONLY RAW JSON. Do not include markdown or citations like [1] in the JSON fields. JSON Schema: { \"actionTitle\", \"subtitle\", \"keyTakeaways\": [], \"script\", \"visualPrompt\", \"assetPrompts\": [], \"consultingLayout\", \"suggestedMotion\", \"keywords\": [] }" }
+          { text: `
+Act as a Creative Director & McKinsey Strategy Lead. Analyze this slide. 
+1. Extract the core strategic message.
+2. Verify facts with Google Search.
+3. DETERMINE THE BEST LAYOUT MODE based on the image content:
+   - "editorial-left": Image content is heavy on the right (e.g., a chart or photo on the right). Text should go on LEFT.
+   - "editorial-right": Image content is heavy on the left. Text should go on RIGHT.
+   - "minimal-centered": Slide is a title slide, quote, or single big number. Text centered.
+   - "mckinsey-insight": Slide is a dense chart/table. Use a top header bar for the main insight, keep the rest clear.
+4. Suggest a cinematic video background prompt.
+
+Output ONLY RAW JSON. Schema: 
+{ 
+  "actionTitle" (punchy, short active voice), 
+  "subtitle" (tracking spaced), 
+  "keyTakeaways": ["point 1", "point 2", "point 3"], 
+  "script" (for voiceover), 
+  "visualPrompt" (abstract, artistic), 
+  "consultingLayout": "editorial-left" | "editorial-right" | "minimal-centered" | "mckinsey-insight", 
+  "suggestedMotion" (for Veo), 
+  "colorPalette": [hex, hex, hex], 
+  "mood": string 
+}` }
         ]
       },
       config: {
@@ -145,7 +133,9 @@ export const analyzeSlideContent = async (base64Image: string): Promise<{ analys
 
     return { 
         analysis: {
-            consultingLayout: 'data-evidence', 
+            consultingLayout: 'editorial-left', 
+            colorPalette: ['#ffffff', '#000000'],
+            mood: 'Sophisticated',
             ...parsed,
             keyTakeaways: Array.isArray(parsed.keyTakeaways) ? parsed.keyTakeaways : [],
             assetPrompts: Array.isArray(parsed.assetPrompts) ? parsed.assetPrompts : [],
@@ -165,7 +155,7 @@ export const deepAnalyzeSlide = async (base64Image: string): Promise<SlideAnalys
       contents: {
         parts: [
           { inlineData: { mimeType: "image/jpeg", data: cleanBase64 } },
-          { text: "Perform a complex strategic synthesis. Recommend a specific cinematic transition motion. Output ONLY RAW JSON. JSON Schema: { \"actionTitle\", \"subtitle\", \"keyTakeaways\": [], \"script\", \"visualPrompt\", \"assetPrompts\": [], \"consultingLayout\", \"suggestedMotion\", \"keywords\": [] }" }
+          { text: "Deep strategic review. Refine the narrative arc. Output ONLY RAW JSON. Schema: { \"actionTitle\", \"subtitle\", \"keyTakeaways\": [], \"script\", \"visualPrompt\", \"consultingLayout\", \"suggestedMotion\", \"colorPalette\", \"mood\" }" }
         ]
       },
       config: {
@@ -176,11 +166,9 @@ export const deepAnalyzeSlide = async (base64Image: string): Promise<SlideAnalys
 
     const parsed = cleanAndParseJSON(response.text);
     return { 
-        consultingLayout: 'strategic-pillars', 
+        consultingLayout: 'editorial-left', 
         ...parsed,
         keyTakeaways: Array.isArray(parsed.keyTakeaways) ? parsed.keyTakeaways : [],
-        assetPrompts: Array.isArray(parsed.assetPrompts) ? parsed.assetPrompts : [],
-        keywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
     };
   });
 };
@@ -194,7 +182,7 @@ export const performAreaEdit = async (base64Image: string, rect: SelectionRect, 
             contents: {
                 parts: [
                     { inlineData: { mimeType: "image/jpeg", data: cleanBase64 } },
-                    { text: `The user has selected a region at X:${rect.x}%, Y:${rect.y}%. Instruction: "${prompt}". Output updated JSON parts only.` }
+                    { text: `Context: Slide Analysis. User selected region X:${rect.x}%, Y:${rect.y}%. User Instruction: "${prompt}". Update the relevant JSON fields (e.g., actionTitle, keyTakeaways) to reflect this change. Output updated JSON parts only.` }
                 ]
             },
             config: { 
@@ -209,9 +197,10 @@ export const performAreaEdit = async (base64Image: string, rect: SelectionRect, 
 export const generateSlideVisual = async (prompt: string): Promise<string | undefined> => {
   return withRetry(async () => {
     const ai = getAI();
+    // Gemini 2.5 Flash Image for fast high-quality generation
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-image", 
-      contents: { parts: [{ text: prompt + ", cinematic 4k, corporate strategy aesthetic" }] }
+      contents: { parts: [{ text: prompt + ", abstract, cinematic lighting, 8k resolution, texture heavy, minimal, high-end design" }] }
     });
     const part = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
     return part?.inlineData ? `data:image/png;base64,${part.inlineData.data}` : undefined;
@@ -223,7 +212,6 @@ export const generateVideoFromImage = async (
   prompt: string, 
   aspectRatio: '16:9' | '9:16' = '16:9'
 ): Promise<string | undefined> => {
-    // Create new instance to pick up latest API key selection
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const cleanBase64 = imageBase64.split(',')[1];
     
@@ -231,7 +219,7 @@ export const generateVideoFromImage = async (
         let operation = await ai.models.generateVideos({
             model: 'veo-3.1-fast-generate-preview',
             image: { imageBytes: cleanBase64, mimeType: 'image/png' },
-            prompt: prompt + ", professional slow cinematic camera motion, high-end production",
+            prompt: prompt + ", cinematic slow motion, ambient movement, 4k",
             config: { 
                 numberOfVideos: 1, 
                 resolution: '720p', 
